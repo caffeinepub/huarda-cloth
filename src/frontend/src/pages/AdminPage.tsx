@@ -28,7 +28,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Link } from "@tanstack/react-router";
-import { ArrowLeft, Loader2, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import {
+  ArrowLeft,
+  KeyRound,
+  Loader2,
+  Pencil,
+  Plus,
+  Trash2,
+  Upload,
+} from "lucide-react";
 import { motion } from "motion/react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -40,6 +48,8 @@ import {
   useDeleteProduct,
   useEditProduct,
   useGetAllProducts,
+  useGetCallerUserRole,
+  useInitializeAccessControlWithSecret,
   useIsCallerAdmin,
 } from "../hooks/useQueries";
 
@@ -61,13 +71,124 @@ function formatPrice(price: bigint): string {
   return `৳ ${price.toLocaleString("bn-BD")}`;
 }
 
+function RegisterAdminScreen({
+  onSuccess,
+  onLogout,
+}: { onSuccess: () => void; onLogout: () => void }) {
+  const [token, setToken] = useState("");
+  const initAccess = useInitializeAccessControlWithSecret();
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!token.trim()) {
+      toast.error("টোকেন দিন");
+      return;
+    }
+    try {
+      await initAccess.mutateAsync(token.trim());
+      toast.success("অ্যাডমিন হিসেবে নিবন্ধন সফল হয়েছে!");
+      onSuccess();
+    } catch (err: any) {
+      const msg = String(err?.message ?? err);
+      if (
+        msg.includes("Invalid") ||
+        msg.includes("invalid") ||
+        msg.includes("wrong") ||
+        msg.includes("incorrect")
+      ) {
+        toast.error("ভুল টোকেন। আবার চেষ্টা করুন।");
+      } else {
+        toast.error("নিবন্ধন ব্যর্থ হয়েছে। টোকেন সঠিক কিনা যাচাই করুন।");
+      }
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
+      <motion.div
+        initial={{ opacity: 0, y: 24 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="bg-card rounded-2xl shadow-card p-10 max-w-md w-full"
+        data-ocid="admin.card"
+      >
+        <div className="flex flex-col items-center mb-6">
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+            <KeyRound className="text-primary" size={26} />
+          </div>
+          <h1 className="font-serif text-2xl font-bold text-foreground text-center">
+            প্রথম অ্যাডমিন হিসেবে নিবন্ধন করুন
+          </h1>
+          <p className="text-muted-foreground font-sans text-sm mt-2 text-center">
+            অ্যাডমিন টোকেন দিয়ে নিবন্ধন করুন
+          </p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="space-y-5">
+          <div className="space-y-1.5">
+            <Label htmlFor="admin-token" className="font-sans">
+              অ্যাডমিন টোকেন
+            </Label>
+            <Input
+              id="admin-token"
+              type="password"
+              value={token}
+              onChange={(e) => setToken(e.target.value)}
+              placeholder="টোকেন লিখুন"
+              className="font-sans"
+              required
+              data-ocid="admin.input"
+            />
+          </div>
+
+          <Button
+            type="submit"
+            size="lg"
+            className="bg-primary hover:bg-brand-deep text-white font-sans w-full"
+            disabled={initAccess.isPending}
+            data-ocid="admin.submit_button"
+          >
+            {initAccess.isPending ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : null}
+            {initAccess.isPending ? "নিবন্ধন হচ্ছে..." : "নিবন্ধন করুন"}
+          </Button>
+        </form>
+
+        <div className="mt-6 flex items-center justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="font-sans text-muted-foreground"
+            onClick={onLogout}
+            data-ocid="admin.secondary_button"
+          >
+            লগআউট
+          </Button>
+          <Link
+            to="/"
+            className="text-sm text-muted-foreground hover:text-foreground font-sans flex items-center gap-1"
+            data-ocid="admin.link"
+          >
+            <ArrowLeft size={14} /> হোমে ফিরুন
+          </Link>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 export default function AdminPage() {
   const { login, clear, loginStatus, identity } = useInternetIdentity();
   const isLoggingIn = loginStatus === "logging-in";
   const isLoggedIn = loginStatus === "success" && !!identity;
 
   const { data: products, isLoading: productsLoading } = useGetAllProducts();
-  const { data: isAdmin, isLoading: adminLoading } = useIsCallerAdmin();
+  const {
+    data: isAdmin,
+    isLoading: adminLoading,
+    refetch: refetchAdmin,
+  } = useIsCallerAdmin();
+  const { data: userRole, isLoading: roleLoading } = useGetCallerUserRole();
   const addProduct = useAddProduct();
   const editProduct = useEditProduct();
   const deleteProduct = useDeleteProduct();
@@ -209,8 +330,8 @@ export default function AdminPage() {
     );
   }
 
-  // Checking admin status
-  if (adminLoading) {
+  // Checking roles
+  if (adminLoading || roleLoading) {
     return (
       <div
         className="min-h-screen bg-background flex items-center justify-center"
@@ -221,7 +342,17 @@ export default function AdminPage() {
     );
   }
 
-  // Not admin
+  // User is not registered — show first admin registration screen
+  if (userRole === null || userRole === undefined) {
+    return (
+      <RegisterAdminScreen
+        onSuccess={() => refetchAdmin()}
+        onLogout={() => clear()}
+      />
+    );
+  }
+
+  // Registered but not admin
   if (!isAdmin) {
     return (
       <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4">
